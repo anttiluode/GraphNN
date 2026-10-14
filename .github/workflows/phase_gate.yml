@@ -1,18 +1,7 @@
 name: Phase computer 896-byte scratch-trained rewrite gate
 
 on:
-  push:
-    paths:
-      - graphnn/half_memory.py
-      - train_phase_gate.py
-      - tests/test_half_memory.py
-      - .github/workflows/phase_gate.yml
-  pull_request:
-    paths:
-      - graphnn/half_memory.py
-      - train_phase_gate.py
-      - tests/test_half_memory.py
-      - .github/workflows/phase_gate.yml
+  workflow_dispatch:
 
 permissions:
   contents: read
