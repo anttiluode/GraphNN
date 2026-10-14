@@ -1,14 +1,8 @@
 name: Wide 1792-byte gain-only control
 
 on:
-  push:
-    paths:
-      - train_wide_gain.py
-      - .github/workflows/wide_gain.yml
-  pull_request:
-    paths:
-      - train_wide_gain.py
-      - .github/workflows/wide_gain.yml
+  workflow_dispatch:
+
 permissions:
   contents: read
 jobs:
