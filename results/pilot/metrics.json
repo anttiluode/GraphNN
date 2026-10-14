@@ -1,0 +1,72 @@
+{
+  "seed": 41,
+  "steps": 500,
+  "config": {
+    "image_size": 32,
+    "grid_size": 8,
+    "channels": 8,
+    "width": 32,
+    "steps": 4
+  },
+  "train_count": 128,
+  "test_count": 32,
+  "batch_size": 8,
+  "device": "cpu",
+  "torch_version": "2.14.1+cpu",
+  "training_seconds": 55.36250684599986,
+  "history": [
+    {
+      "step": 1,
+      "graph": 0.12312430143356323,
+      "vector": 0.12350720167160034
+    },
+    {
+      "step": 100,
+      "graph": 0.02397080883383751,
+      "vector": 0.034627515822649
+    },
+    {
+      "step": 200,
+      "graph": 0.021152351051568985,
+      "vector": 0.019621212035417557
+    },
+    {
+      "step": 300,
+      "graph": 0.018038161098957062,
+      "vector": 0.01650441251695156
+    },
+    {
+      "step": 400,
+      "graph": 0.017894934862852097,
+      "vector": 0.016908835619688034
+    },
+    {
+      "step": 500,
+      "graph": 0.015357131138443947,
+      "vector": 0.014217346906661987
+    }
+  ],
+  "held_out": {
+    "graph": {
+      "mse": 0.01670848485082388,
+      "psnr_db": 17.77062930762544,
+      "shuffled_mse": 0.0746520385146141,
+      "blank_mse": 0.11544296517968178,
+      "payload_bytes": 1792,
+      "shared_parameters": 44099,
+      "shared_weight_bytes": 176396,
+      "evaluation_seconds": 0.1968721819998791
+    },
+    "vector": {
+      "mse": 0.014721506740897894,
+      "psnr_db": 18.320477378402835,
+      "shuffled_mse": 0.07840047031641006,
+      "blank_mse": 0.08594826608896255,
+      "payload_bytes": 1792,
+      "shared_parameters": 44099,
+      "shared_weight_bytes": 176396,
+      "evaluation_seconds": 0.12482283700001062
+    }
+  },
+  "limits": "One seed, procedural 32x32 pairs; equal bytes and parameters, different inference computation. No natural-photo or unlimited-capacity claim."
+}
