@@ -8,6 +8,49 @@ parameters** with the default settings.
 
 ![Janus Graph GUI](results/gui.png)
 
+## Rewrite gate: update A while retaining B
+
+The GUI now has **Write A**, **Write B** and **Flip A detail**. A single
+write updates the existing byte state with frozen shared weights. Loading
+an image stages it for writing; **Rebuild pair (frozen)** explicitly starts
+a fresh A→B state. Choose the **rewrite** fit task to train A→B→revised A.
+
+The [frozen protocol](docs/superpowers/specs/2026-10-14-rewrite-gate-design.md)
+uses independent blue/orange 6x6 marks in procedural images. The last write
+sees revised A and the previous bytes only. B's pixels are not replayed,
+scoring masks are never reader inputs, and every write is quantized.
+
+Three seeds, 500 training steps per seed, and 128 held-out pairs per seed;
+both arms have the same architecture size, batches and supervision:
+
+| After rewriting A | Graph transport | Direct / vector |
+| --- | ---: | ---: |
+| Updated A mark correct | 100% | 99.74% |
+| B mark retained | 100% | 99.22% |
+| Both correct | 100% (384/384) | 98.96% (380/384) |
+
+**Both arms pass the rewrite gate. A consistent graph advantage is not
+demonstrated:** joint scores are 100/100/100% for graph and
+97.66/100/99.22% for vector, including a tied seed. This tests one rewrite
+of a binary detail; RGB reconstructions remain blurry. It does not establish
+unlimited retention or generalization to photographs.
+
+Skipping the last write fails to recover the new A mark. Shuffling final
+memory reduces mark accuracy to roughly chance. The runner also reports a
+privileged fresh rebuild that sees B's pixels again. See the
+[summary](results/rewrite_gate/pilot500/summary.json) and per-seed metrics.
+The original pair-trained checkpoint is included as a comparison, but its
+data and objective differ, so this is not an isolated curriculum ablation.
+
+![Updated A and retained B, graph and vector, seed 41](results/rewrite_gate/pilot500/seed41/predictions.png)
+
+Reproduce the gate and inspect one saved state:
+
+```text
+python train_rewrite.py --steps 500 --seeds 41 97 127 --device auto --output runs/rewrite_gate
+python janus_cabbage_graph.py --checkpoint runs/rewrite_gate/seed41/memory.pt
+```
+
 ## Run the GUI
 
 Download the **whole repository** with GitHub's **Code → Download ZIP**, or:
@@ -35,33 +78,39 @@ python -m pip install -r requirements.txt
 python janus_cabbage_graph.py
 ```
 
-The bundled pilot weights initialize a generated demo pair with **frozen
-weights**, so there is something to inspect immediately. Click **Fit loaded
+The bundled rewrite-trained weights initialize a generated marked demo pair
+with **frozen weights**, so there is something to inspect immediately. Click
+**Flip A detail**, then query B to inspect retention. Click **Fit loaded
 pair** for the original Janus-style fitting workflow. Use `--device cpu`
 to force CPU. To read a saved memory without loading its original images:
 
 ```text
-python janus_cabbage_graph.py --checkpoint results/pilot/memory.pt
+python janus_cabbage_graph.py --checkpoint results/rewrite_gate/pilot500/seed41/memory.pt
 ```
 
 ## What to try
 
-1. Load image A and B; each is resized to 32x32. Loading a complete pair
-   encodes it with the current frozen weights.
-2. Set the additional fit steps, then click **Fit loaded pair**. **Pause**
-   takes effect after the current step; fitting can be resumed.
+1. Load image A and B; each is resized to 32x32. Loading stages the images.
+   Click **Write A/B** to update existing memory, or **Rebuild pair (frozen)**
+   for a fresh pair state.
+2. Set the additional fit steps and task, then click **Fit loaded pair**.
+   **pair** fits the two endpoints; **rewrite** also trains an A update while
+   retaining B. **Pause** takes effect after the current step.
 3. Move the slider: **0° asks for A**, **90° asks for B**. Intermediate
    queries have no supervised physical meaning and are not inferred 3D views.
 4. Compare **Graph response** to **Direct / vector control**. Change
    **Read memory** to **randomized** or **blank**: the reader now receives
    altered bytes. The gain/phase maps continue to show the original stored
-   edges. Endpoint metrics always refer to the unmodified stored memory.
+   edges. Endpoint metrics use known, actually written targets and the
+   unmodified stored memory, even if different source images are staged.
 5. **Save memory** stores model tensors and byte states, with no source
    pixels. **Load saved memory** clears the source thumbnails and still
-   renders. Supply both source images again if you want to fit further.
-6. **Encode with frozen weights** performs a fresh write without updating
-   shared parameters. **Export graph view** saves the displayed graph answer
-   at its native resolution.
+   renders. You can load and write A without B's source pixels; only known
+   targets are scored. Supply both images again to fit further.
+6. **Flip A detail** paints a contrasting patch on the written A and writes
+   A alone. The retention report compares B's MSE before and after that write
+   when B's target is known. **Export graph view** saves the displayed graph
+   answer at its native resolution.
 
 The maps show average incident edge gain/phase **byte values** in the
 selected channel. The phase map is a byte diagnostic, not an inferred
@@ -145,11 +194,13 @@ This is not an arbitrary-length online-history retention test.
 ```text
 python -m unittest discover -s tests -v
 python train.py --steps 2 --train-count 4 --test-count 4 --batch-size 2 --device cpu --output runs/smoke
+python train_rewrite.py --steps 2 --seeds 41 --train-count 4 --test-count 4 --batch-size 2 --device cpu --output runs/rewrite_smoke
 ```
 
 Linux GUI verification uses `xvfb-run -a python -m unittest discover -s tests -v`.
 Without a display, only the GUI tests are skipped. CI runs real Tk widgets
-under Xvfb, including training/pause/slider and loading source-free memory.
+under Xvfb, including training/pause/slider, single writes, patch rewrites,
+staged sources and loading source-free memory.
 
 Related mechanisms: [SihtiResponseGraph](https://github.com/anttiluode/SihtiResponseGraph),
 [SihtiGrapImageModel](https://github.com/anttiluode/SihtiGrapImageModel),

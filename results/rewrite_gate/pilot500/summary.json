@@ -1,0 +1,34 @@
+{
+  "runs": [
+    {
+      "seed": 41,
+      "metrics": "seed41/metrics.json"
+    },
+    {
+      "seed": 97,
+      "metrics": "seed97/metrics.json"
+    },
+    {
+      "seed": 127,
+      "metrics": "seed127/metrics.json"
+    }
+  ],
+  "mean_after": {
+    "graph": {
+      "a_mark_accuracy": 1.0,
+      "b_mark_accuracy": 1.0,
+      "joint_mark_accuracy": 1.0
+    },
+    "vector": {
+      "a_mark_accuracy": 0.9973958333333334,
+      "b_mark_accuracy": 0.9921875,
+      "joint_mark_accuracy": 0.9895833333333334
+    }
+  },
+  "mechanism_pass": {
+    "graph": true,
+    "vector": true
+  },
+  "graph_joint_advantage_every_seed": false,
+  "criteria": "Mean new A >=90%, retained B >=90%, joint >=80%; graph advantage requires higher joint accuracy in every seed. Exploratory synthetic gate, not a universal architecture claim."
+}

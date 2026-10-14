@@ -78,18 +78,21 @@ class PairSession:
             self.models[arm] = JanusModel(self.config,arm).to(self.device)
         self.optimizers = {k:torch.optim.Adam(m.parameters(),lr=learning_rate) for k,m in self.models.items()}
         self.images = None
+        self.memory_targets = [None,None]
+        self.last_write_report = None
         self.memories = {}
         self.steps = 0
         self.mode = "untrained"
 
-    def set_pair(self, images):
+    def set_pair(self, images, encode=True):
         images = np.asarray(images,dtype=np.float32)
         s = self.config.image_size
         if images.shape != (2,s,s,3) or not np.isfinite(images).all() or ((images<0)|(images>1)).any():
             raise ValueError(f"Expected two finite {s}x{s} RGB images in 0..1")
         with self.lock:
             self.images = images.copy()
-            self.encode()
+            if encode:
+                self.encode()
 
     def _pair(self):
         if self.images is None:
@@ -100,15 +103,74 @@ class PairSession:
     def encode(self):
         with self.lock:
             pair = self._pair()
-            self.memories = {k:m.encode_pair(pair).quantized() for k,m in self.models.items()}
+            self.memories = {
+                k:m.write(pair[:,1],90.,m.write(pair[:,0],0.).quantized()).quantized()
+                for k,m in self.models.items()}
+            self.memory_targets = list(self.images.copy())
+            self.last_write_report = None
 
-    def step(self):
+    def step(self, rewrite=False):
         with self.lock:
-            loss = fit_step(self.models,self.optimizers,self._pair())
+            if rewrite:
+                from .rewrite import make_rewrite_batch, fit_rewrite_step, rewrite_states
+                batch=make_rewrite_batch(self._pair(),seed=self.seed,controlled_marks=False)
+                loss=fit_rewrite_step(self.models,self.optimizers,batch)
+                self.memories={k:rewrite_states(m,batch)[1] for k,m in self.models.items()}
+                self.memory_targets=list(batch.updated[0].permute(0,2,3,1).cpu().numpy())
+                self.last_write_report=None
+            else:
+                loss = fit_step(self.models,self.optimizers,self._pair())
+                self.encode()
             self.steps += 1
-            self.mode = "pair-fit"
-            self.encode()
+            self.mode = "rewrite-fit" if rewrite else "pair-fit"
             return loss
+
+    @torch.no_grad()
+    def write_image(self, image, context):
+        if context not in (0.,90.):
+            raise ValueError("Single writes identify A at 0 degrees or B at 90 degrees")
+        image=np.asarray(image,dtype=np.float32)
+        s=self.config.image_size
+        if image.shape!=(s,s,3) or not np.isfinite(image).all() or ((image<0)|(image>1)).any():
+            raise ValueError("Expected one finite RGB source image in 0..1")
+        role=0 if context==0 else 1
+        other=1-role
+        other_name="b" if other==1 else "a"
+        with self.lock:
+            tensor=torch.from_numpy(image.transpose(2,0,1).copy())[None].to(self.device)
+            staged,reports={},{}
+            for arm,model in self.models.items():
+                model.eval()
+                previous=self.memories.get(arm)
+                old_answer=model.read(previous,90.*other) if previous is not None else None
+                new_memory=model.write(tensor,context,previous=previous).quantized()
+                new_answer=model.read(new_memory,90.*other)
+                report={"changed_bytes":int((previous.flat()!=new_memory.flat()).sum()) if previous is not None else model.payload_bytes}
+                if old_answer is not None:
+                    report[other_name+"_prediction_change_mse"]=float((old_answer-new_answer).square().mean())
+                    target=self.memory_targets[other]
+                    if target is not None:
+                        truth=torch.from_numpy(target.transpose(2,0,1).copy())[None].to(self.device)
+                        report[other_name+"_mse_before"]=float((old_answer-truth).square().mean())
+                        report[other_name+"_mse_after"]=float((new_answer-truth).square().mean())
+                staged[arm],reports[arm]=new_memory,report
+            self.memories=staged
+            self.memory_targets[role]=image.copy()
+            if self.images is not None:
+                self.images[role]=image
+            self.last_write_report=reports
+            return reports
+
+    def rewrite_a(self):
+        from .rewrite import make_rewrite_batch
+        with self.lock:
+            if self.memory_targets[0] is None:
+                raise ValueError("Write A first so its current source detail is known")
+            a=torch.from_numpy(self.memory_targets[0].transpose(2,0,1).copy())
+            # B is a dummy for selecting masks; only the revised A is written.
+            pair=torch.stack((a,torch.zeros_like(a)))[None]
+            batch=make_rewrite_batch(pair,seed=self.seed,controlled_marks=False)
+            return self.write_image(batch.updated[0,0].permute(1,2,0).numpy(),0.)
 
     def _controlled(self, memory, control):
         if control == "stored":
@@ -133,14 +195,20 @@ class PairSession:
     def metrics(self):
         with self.lock:
             results = {}
-            pair = self._pair() if self.images is not None else None
             for arm,model in self.models.items():
                 metric = {"payload_bytes":model.payload_bytes,
                           "shared_parameters":sum(p.numel() for p in model.parameters())}
-                if pair is not None and arm in self.memories:
-                    mse = sum(float((model.read(self.memories[arm],a)-pair[:,i]).square().mean())
-                              for i,a in enumerate((0.,90.))) / 2
-                    metric.update(mse=mse,psnr_db=-10*math.log10(max(mse,1e-12)))
+                if arm in self.memories:
+                    endpoints={}
+                    for i,angle in enumerate((0.,90.)):
+                        if self.memory_targets[i] is not None:
+                            truth=torch.from_numpy(self.memory_targets[i].transpose(2,0,1).copy())[None].to(self.device)
+                            endpoints["AB"[i]]=float((model.read(self.memories[arm],angle)-truth).square().mean())
+                    if endpoints:
+                        mse=sum(endpoints.values())/len(endpoints)
+                        metric.update(mse=mse,psnr_db=-10*math.log10(max(mse,1e-12)),endpoint_mse=endpoints)
+                if self.last_write_report is not None:
+                    metric["last_write"]=self.last_write_report[arm]
                 results[arm] = metric
             return results
 
@@ -215,4 +283,6 @@ class PairSession:
             self.config,self.models,self.memories = config,models,memories
             self.optimizers = {k:torch.optim.Adam(m.parameters(),lr=self.learning_rate) for k,m in models.items()}
             self.images = None
+            self.memory_targets = [None,None]
+            self.last_write_report = None
             self.steps,self.mode = steps,mode
