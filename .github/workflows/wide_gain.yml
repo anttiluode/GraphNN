@@ -1,0 +1,29 @@
+name: Wide 1792-byte gain-only control
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+jobs:
+  wide-gain:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        seed: [41, 97, 127]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+      - run: python -m pip install numpy Pillow
+      - run: python -u train_wide_gain.py --steps 500 --seeds ${{ matrix.seed }} --device cpu --output runs/wide_gain_gate
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: wide-gain-seed-${{ matrix.seed }}
+          path: runs/wide_gain_gate/seed${{ matrix.seed }}/
+          if-no-files-found: warn
