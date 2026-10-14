@@ -8,6 +8,32 @@ parameters** with the default settings.
 
 ![Janus Graph GUI](results/gui.png)
 
+## Phase computer gate — actual 896-byte phase memory, trained from scratch (October 14)
+
+**New finding:** training the A→B→A′ rewrite task with **only 896 persistent phase bytes** preserves both test marks in **384/384** held-out pairs (three training seeds, 500 steps each). The same-sized **gain-only graph** reaches 337/384, and the same-sized **direct vector** reaches 376/384. The original two-factor **1792-byte complex graph** also reaches 384/384. A stronger **1792-byte / 16-channel gain-only graph** with **more parameters** reaches 349/384. The phase-only model matches the original full graph while halving per-pair state and obtains lower mean B reconstruction MSE (0.01989 vs 0.02038).
+
+| Model | Inference state | Shared parameters | Joint mark recovery | B MSE ↓ | B drift ↓ |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| **Phase-only graph** | **896 bytes** | 43,211 | **100%** | **0.01989** | **0.000681** |
+| Gain-only graph | 896 bytes | 43,211 | 87.76% | 0.06178 | 0.011864 |
+| Direct vector | 896 bytes | 43,211 | 97.92% | 0.04414 | 0.017199 |
+| Original complex graph | 1,792 bytes | 44,099 | 100% | 0.02038 | 0.000847 |
+| Original direct vector | 1,792 bytes | 44,099 | 98.96% | 0.02743 | 0.009546 |
+| Wide gain-only graph | 1,792 bytes | 58,035 | 90.89% | 0.05847 | 0.011409 |
+
+This is a **trained** compressed graph, not merely the previous test-time phase ablation. But it remains a narrow 32×32 synthetic two-mark rewrite task. Phase-only vs gain-only does **not** yet distinguish complex U(1) interference from more general signed mixing; the graph is dissipative, not unitary, and no loop-holonomy mechanism has been demonstrated. Graph propagation has greater compute than direct vector lookup.
+
+Read the [full analysis and per-seed receipts](results/phase_gate/REPORT.md), [protocol](docs/phase_computer_gate.md), and [machine-readable scores](results/phase_gate/pilot500/summary.json). [Phase gate CI run and saved models](https://github.com/anttiluode/GraphNN/actions/runs/38585101081) · [wide gain-only CI run](https://github.com/anttiluode/GraphNN/actions/runs/38585441325).
+
+Train the new models, then open the side-by-side GUI:
+
+```bat
+python3.13 train_phase_gate.py --steps 500 --seeds 41 97 127 --device cpu --output runs/phase_gate
+python3.13 phase_computer_gui.py --seed 41 --runs runs/phase_gate
+```
+
+The original `janus_cabbage_graph.py` GUI and its pretrained 1,792-byte models remain unchanged. The new viewer displays frozen phase-only/gain-only/vector models against the same held-out targets.
+
 ## Rewrite gate: update A while retaining B
 
 The GUI now has **Write A**, **Write B** and **Flip A detail**. A single
