@@ -15,3 +15,4 @@ jobs:
       - run: python -m pip install numpy Pillow
       - run: xvfb-run -a python -m unittest discover -s tests -v
       - run: python train.py --steps 2 --train-count 4 --test-count 4 --batch-size 2 --device cpu --output runs/smoke
+      - run: python train_rewrite.py --steps 2 --seeds 41 --train-count 4 --test-count 4 --batch-size 2 --device cpu --output runs/rewrite_smoke

@@ -12,9 +12,15 @@ import torch
 
 from .data import demo_pair, image_from_array, load_image
 from .training import PairSession
+from .rewrite import make_rewrite_batch
 
 
 BG, PANEL, TEXT, MUTED, ACCENT = "#0b1220", "#141e30", "#edf3ff", "#95a8c5", "#43dac4"
+
+
+def demo_sources(size,seed):
+    pair=torch.from_numpy(demo_pair(size,seed).transpose(0,3,1,2).copy())[None]
+    return make_rewrite_batch(pair,seed=seed).original[0].permute(0,2,3,1).numpy()
 
 
 class JanusApp:
@@ -38,6 +44,7 @@ class JanusApp:
         self.control = tk.StringVar(root,"stored")
         self.channel = tk.IntVar(root,0)
         self.step_limit = tk.StringVar(root,"1000")
+        self.fit_task = tk.StringVar(root,"pair")
         self.query_text = tk.StringVar(root)
         self.status = tk.StringVar(root,"Ready. Load images or try the generated pair.")
         self.metric_text = tk.StringVar(root)
@@ -48,10 +55,11 @@ class JanusApp:
         self.root.protocol("WM_DELETE_WINDOW",self.close)
         self._build()
         if self.session.images is None and not self.session.memories:
-            self.session.set_pair(demo_pair(self.session.config.image_size,41))
+            self.session.set_pair(demo_sources(self.session.config.image_size,41))
         if self.session.images is not None:
             self.image_slots = list(self.session.images.copy())
         self._thumbnails()
+        self._set_busy(False)
         self.angle.trace_add("write",lambda *_:self.request_render())
         self.control.trace_add("write",lambda *_:self.request_render())
         self.channel.trace_add("write",lambda *_:self.request_render())
@@ -91,11 +99,15 @@ class JanusApp:
             label.pack(padx=14,pady=(0,7))
             self.target_labels.append(label)
         self._button(left,"Generated demo pair",self.demo).pack(fill="x",padx=14,pady=5)
-        self._label(left,"Additional fit steps",color=MUTED,size=10).pack(anchor="w",padx=14,pady=(12,3))
-        tk.Entry(left,textvariable=self.step_limit,bg="#25344d",fg=TEXT,insertbackground=TEXT,relief="flat").pack(fill="x",padx=14,ipady=6)
+        self._label(left,"Additional fit steps / task",color=MUTED,size=10).pack(anchor="w",padx=14,pady=(12,3))
+        fit_controls=tk.Frame(left,bg=PANEL)
+        fit_controls.pack(fill="x",padx=14)
+        tk.Entry(fit_controls,textvariable=self.step_limit,width=8,bg="#25344d",fg=TEXT,insertbackground=TEXT,relief="flat").pack(side="left",fill="x",expand=True,ipady=6)
+        self.task_box=ttk.Combobox(fit_controls,textvariable=self.fit_task,values=("pair","rewrite"),state="readonly",width=8)
+        self.task_box.pack(side="left",padx=(5,0))
         self.train_button = self._button(left,"Fit loaded pair",self.toggle_train,True)
         self.train_button.pack(fill="x",padx=14,pady=(8,5))
-        self._button(left,"Encode with frozen weights",self.encode).pack(fill="x",padx=14,pady=5)
+        self._button(left,"Rebuild pair (frozen)",self.encode).pack(fill="x",padx=14,pady=5)
         self._button(left,"Load saved memory",self.load_checkpoint).pack(fill="x",padx=14,pady=5)
         self._button(left,"Save memory",self.save_checkpoint).pack(fill="x",padx=14,pady=5)
         self._button(left,"Export graph view",self.export).pack(fill="x",padx=14,pady=5)
@@ -125,6 +137,16 @@ class JanusApp:
         self._label(controls,"Map channel:",color=MUTED).pack(side="left",padx=(12,4))
         self.channel_box = ttk.Combobox(controls,textvariable=self.channel,values=list(range(self.session.config.channels)),state="readonly",width=4)
         self.channel_box.pack(side="left")
+        writes=tk.Frame(query,bg=PANEL)
+        writes.pack(fill="x",padx=14,pady=(0,10))
+        self._label(writes,"Frozen writes:",color=MUTED,size=10).pack(side="left",padx=(0,8))
+        self.write_buttons={}
+        for slot in (0,1):
+            button=self._button(writes,f"Write {'AB'[slot]}",lambda s=slot:self.write_source(s))
+            button.pack(side="left",padx=3)
+            self.write_buttons[slot]=button
+        self.rewrite_button=self._button(writes,"Flip A detail",self.rewrite_a)
+        self.rewrite_button.pack(side="left",padx=3)
         memory = tk.Frame(right,bg=PANEL)
         memory.pack(fill="both",expand=True,pady=(12,0))
         self.map_labels = {}
@@ -156,6 +178,11 @@ class JanusApp:
             self.train_button.configure(state="normal",text="Pause fitting")
         else:
             self.train_button.configure(text="Fit loaded pair",state="normal" if not value and self.session.images is not None else "disabled")
+        self.task_box.configure(state="disabled" if value else "readonly")
+        if not value:
+            for slot,button in self.write_buttons.items():
+                button.configure(state="normal" if self.image_slots[slot] is not None else "disabled")
+            self.rewrite_button.configure(state="normal" if self.session.memory_targets[0] is not None else "disabled")
 
     def _job(self, kind, function):
         if self.busy or self.closed:
@@ -186,13 +213,19 @@ class JanusApp:
             messagebox.showerror("Fit steps",str(error),parent=self.root)
             return
         def fit():
+            completed=False
             for step in range(steps):
                 if self.stop_event.is_set():
                     break
-                self.session.step()
+                self.session.step(rewrite=rewrite_task)
+                completed=True
                 if step % 10 == 0:
                     self.messages.put(("progress",self.session.steps))
                 self.stop_event.wait(.002)
+            if rewrite_task and completed:
+                with self.session.lock:
+                    self.session.set_pair(np.stack(self.session.memory_targets),encode=False)
+        rewrite_task=self.fit_task.get()=="rewrite"
         self._job("fit",fit)
 
     def request_render(self):
@@ -237,7 +270,10 @@ class JanusApp:
         for arm in ("graph","vector"):
             metric = metrics[arm]
             lines.append(f"{arm.title()} endpoints: MSE {metric['mse']:.5f} · {metric['psnr_db']:.2f} dB" if "mse" in metric else f"{arm.title()}: saved memory; targets unavailable")
-        lines.extend(("","Metrics use stored memory at 0° / 90°.","Map shows stored edges; control affects reads."))
+            if "last_write" in metric and "b_mse_before" in metric["last_write"]:
+                write=metric["last_write"]
+                lines.append(f"B retention: {write['b_mse_before']:.4f} → {write['b_mse_after']:.4f}")
+        lines.extend(("","Metrics use known written targets at 0° / 90°.","Map shows stored edges; control affects reads."))
         self.metric_text.set("\n".join(lines))
 
     def _poll(self):
@@ -260,13 +296,23 @@ class JanusApp:
                 self.status.set(f"Fitting loaded pair · step {message[1]:,}. Move the slider to inspect.")
                 self.request_render()
             elif kind == "done":
-                self._set_busy(False)
                 if message[1] == "load":
                     self.image_slots = [None,None]
                     self.channel.set(0)
                     self.channel_box.configure(values=list(range(self.session.config.channels)))
                     self._thumbnails()
-                self.status.set("Saved memory loaded. Reads need no source pixels." if message[1]=="load" else "Ready. Shared weights stay fixed until you fit again.")
+                elif message[1]=="rewrite":
+                    self.image_slots[0]=self.session.memory_targets[0].copy()
+                    self._thumbnails()
+                elif message[1]=="fit" and self.session.mode=="rewrite-fit":
+                    self.image_slots=list(self.session.memory_targets)
+                    self._thumbnails()
+                self._set_busy(False)
+                descriptions={"load":"Saved memory loaded. Reads need no source pixels.",
+                              "stage":"Sources staged. Write A/B updates memory; Rebuild pair starts a fresh pair.",
+                              "write":"Single-image write complete. Shared weights stayed fixed.",
+                              "rewrite":"A detail updated from its new image. B was read from retained memory."}
+                self.status.set(descriptions.get(message[1],"Ready. Shared weights stay fixed until you fit again."))
                 self.request_render()
             elif kind == "error":
                 self._set_busy(False)
@@ -287,14 +333,15 @@ class JanusApp:
             self._thumbnails()
             if all(i is not None for i in self.image_slots):
                 pair = np.stack(self.image_slots)
-                self._job("encode",lambda:self.session.set_pair(pair))
+                self._job("stage",lambda:self.session.set_pair(pair,encode=False))
             else:
-                self.status.set("Load the other image to encode a complete pair with frozen weights.")
+                self.status.set("Source staged. Write this image now, or load the other image for a fresh pair rebuild.")
+                self._set_busy(False)
         except Exception as error:
             messagebox.showerror("Image",str(error),parent=self.root)
 
     def demo(self):
-        pair = demo_pair(self.session.config.image_size,41+self.session.steps)
+        pair = demo_sources(self.session.config.image_size,41+self.session.steps)
         self.image_slots = list(pair)
         self._thumbnails()
         self._job("encode",lambda:self.session.set_pair(pair))
@@ -302,10 +349,18 @@ class JanusApp:
     def encode(self):
         self._job("encode",self.session.encode)
 
+    def write_source(self,slot):
+        if self.image_slots[slot] is not None:
+            image=self.image_slots[slot].copy()
+            self._job("write",lambda:self.session.write_image(image,90.*slot))
+
+    def rewrite_a(self):
+        self._job("rewrite",self.session.rewrite_a)
+
     def reset(self):
         if self.busy:
             return
-        pair = np.stack(self.image_slots) if all(i is not None for i in self.image_slots) else demo_pair(self.session.config.image_size,41)
+        pair = np.stack(self.image_slots) if all(i is not None for i in self.image_slots) else demo_sources(self.session.config.image_size,41)
         self.session = PairSession(self.session.config,str(self.session.device))
         self.session.set_pair(pair)
         self.image_slots = list(pair)
@@ -355,10 +410,13 @@ def main():
         if args.checkpoint:
             session.load(args.checkpoint)
         else:
-            bundled = Path(__file__).resolve().parents[1]/"results"/"pilot"/"memory.pt"
+            repository=Path(__file__).resolve().parents[1]
+            bundled=repository/"results"/"rewrite_gate"/"pilot500"/"seed41"/"memory.pt"
+            if not bundled.exists():
+                bundled=repository/"results"/"pilot"/"memory.pt"
             if bundled.exists():
                 session.load(bundled)
-                session.set_pair(demo_pair(session.config.image_size,41))
+                session.set_pair(demo_sources(session.config.image_size,41))
         root = tk.Tk()
     except (ValueError,tk.TclError) as error:
         parser.exit(1,f"Cannot start Janus Graph: {error}\nLinux: install python3-tk and use a desktop display.\n")
