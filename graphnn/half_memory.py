@@ -61,8 +61,8 @@ class HalfJanus(nn.Module):
     """One persistent byte per edge-channel; fixed other factor.
 
     kind is phase_only or gain_only. reader is graph or vector.
-    phase_only (graph) fixes all edge gains to a constant 128/255;
-    gain_only (graph) fixes all edge phases to neutral midpoint 128/255.
+    phase_only (graph) fixes all edge gains to a constant 0.5;
+    gain_only (graph) fixes all edge phases to neutral midpoint 0.5.
     A vector reader sees two byte planes as flattened features and uses
     precisely the same parameter budget as its graph counterpart.
     """
@@ -107,8 +107,8 @@ class HalfJanus(nn.Module):
         # For the direct baseline, supply the *same* two planes in the
         # same ordered slot locations for both phase and gain variants.
         # The direct read does not physically require phase semantics.
-        const_h=torch.full_like(h,128/255)
-        const_v=torch.full_like(v,128/255)
+        const_h=torch.full_like(h,0.5)
+        const_v=torch.full_like(v,0.5)
         if self.reader=="vector":
             return GraphMemory((h,const_h,v,const_v))
         if self.kind=="phase_only":
