@@ -1,0 +1,35 @@
+name: GraphNN PR2 readout geometry diagnostic
+on:
+  push:
+    paths:
+      - 'diagnostics/**'
+      - '.github/workflows/rewrite_diagnostics.yml'
+  pull_request:
+    paths:
+      - 'diagnostics/**'
+      - '.github/workflows/rewrite_diagnostics.yml'
+permissions:
+  contents: read
+jobs:
+  checkpoint-diagnostic:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install CPU scientific dependencies
+        run: |
+          python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install numpy Pillow
+      - name: Smoke-check saved checkpoint and JVP
+        run: python -m diagnostics.measure_rewrite_geometry --seeds 41 --cases 4 --chunk 2 --random-repeats 1 --jvp-cases 2 --output runs/diagnostic-smoke.json
+      - name: Analyze all 3 frozen PR2 checkpoints
+        run: python -u -m diagnostics.measure_rewrite_geometry --seeds 41 97 127 --cases 128 --chunk 16 --random-repeats 4 --jvp-cases 16 --output runs/diagnostic-rewrite.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: graphnn-pr2-rewrite-diagnostic
+          path: runs/diagnostic-*.json
+          if-no-files-found: warn
